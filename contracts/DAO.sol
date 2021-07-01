@@ -6,8 +6,6 @@ import "@openzeppelin/contracts/token/ERC777/IERC777Recipient.sol";
 import "@openzeppelin/contracts/utils/introspection/IERC1820Registry.sol";
 import "./Gouverno.sol";
 
-//1000000000000000000000
-
 contract DAO is IERC777Recipient {
     using Counters for Counters.Counter;
 
@@ -25,14 +23,17 @@ contract DAO is IERC777Recipient {
     struct Proposal {
         Status status;
         address proposer;
+        address target;
+        string signature;
         uint256 createdAt;
         uint256 nbYes;
         uint256 nbNo;
+        bytes callData;
         string proposition;
     }
 
     IERC1820Registry private _erc1820 = IERC1820Registry(0x1820a4B7618BdE71Dce8cdc73aAB6C95905faD24);
-    bytes32 private constant TOKENS_RECIPIENT_INTERFACE_HASH = keccak256("ERC777TokensRecipient");
+    bytes32 private constant _TOKENS_RECIPIENT_INTERFACE_HASH = keccak256("ERC777TokensRecipient");
     uint256 public constant TIME_LIMIT = 1 minutes;
     uint256 public constant MIN_BALANCE_PROPOSE = 1000 * 10**18;
     IERC777 private _gouverno;
@@ -42,7 +43,7 @@ contract DAO is IERC777Recipient {
     mapping(address => uint256) private _votesBalances;
 
     constructor() {
-        _erc1820.setInterfaceImplementer(address(this), TOKENS_RECIPIENT_INTERFACE_HASH, address(this));
+        _erc1820.setInterfaceImplementer(address(this), _TOKENS_RECIPIENT_INTERFACE_HASH, address(this));
         address[] memory defaultOperators_ = new address[](1);
         defaultOperators_[0] = address(this);
         _gouverno = new Gouverno(defaultOperators_);
@@ -68,13 +69,21 @@ contract DAO is IERC777Recipient {
         _gouverno.send(msg.sender, amount, "");
     }
 
-    function propose(string memory proposition) public returns (uint256) {
+    function propose(
+        address target,
+        string memory signature,
+        bytes memory callData,
+        string memory proposition
+    ) public returns (uint256) {
         require(_votesBalances[msg.sender] >= MIN_BALANCE_PROPOSE, "DAO: Not enough GVNR deposited");
         _id.increment();
         uint256 id = _id.current();
         _proposals[id] = Proposal({
             status: Status.Running,
             proposer: msg.sender,
+            target: target,
+            signature: signature,
+            callData: callData,
             createdAt: block.timestamp,
             nbYes: 0,
             nbNo: 0,
@@ -90,6 +99,17 @@ contract DAO is IERC777Recipient {
         if (block.timestamp > _proposals[id].createdAt + TIME_LIMIT) {
             if (_proposals[id].nbYes > _proposals[id].nbNo) {
                 _proposals[id].status = Status.Approved;
+                Proposal memory proposal = _proposals[id];
+                bytes memory callData;
+
+                //Check ce if
+                if (bytes(proposal.signature).length == 0) {
+                    callData = proposal.callData;
+                } else {
+                    callData = abi.encodePacked(bytes4(keccak256(bytes(proposal.signature))), proposal.callData);
+                }
+                (bool success, bytes memory data) = (proposal.target).call(callData);
+                require(success, "DAO: Transaction execution reverted.");
             } else {
                 _proposals[id].status = Status.Rejected;
             }
@@ -117,5 +137,9 @@ contract DAO is IERC777Recipient {
 
     function votesBalanceOf(address account) public view returns (uint256) {
         return _votesBalances[account];
+    }
+
+    function totalVotesBalance() public view returns (uint256) {
+        return _gouverno.balanceOf(address(this));
     }
 }
