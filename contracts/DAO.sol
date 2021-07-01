@@ -16,6 +16,7 @@ contract DAO is IERC777Recipient {
         No
     }
     enum Status {
+        Inactive,
         Running,
         Approved,
         Rejected
@@ -32,7 +33,8 @@ contract DAO is IERC777Recipient {
 
     IERC1820Registry private _erc1820 = IERC1820Registry(0x1820a4B7618BdE71Dce8cdc73aAB6C95905faD24);
     bytes32 private constant TOKENS_RECIPIENT_INTERFACE_HASH = keccak256("ERC777TokensRecipient");
-    uint256 public constant TIME_LIMIT = 3 minutes;
+    uint256 public constant TIME_LIMIT = 1 minutes;
+    uint256 public constant MIN_BALANCE_PROPOSE = 1000 * 10**18;
     IERC777 private _gouverno;
     Counters.Counter private _id;
     mapping(uint256 => Proposal) private _proposals;
@@ -60,9 +62,14 @@ contract DAO is IERC777Recipient {
         _gouverno.operatorSend(msg.sender, address(this), amount, "", "");
     }
 
-    function withdraw(uint256 amount) public {}
+    function withdraw(uint256 amount) public {
+        require(_votesBalances[msg.sender] >= amount, "DAO: amount exceed balance");
+        _votesBalances[msg.sender] -= amount;
+        _gouverno.send(msg.sender, amount, "");
+    }
 
     function propose(string memory proposition) public returns (uint256) {
+        require(_votesBalances[msg.sender] >= MIN_BALANCE_PROPOSE, "DAO: Not enough GVNR deposited");
         _id.increment();
         uint256 id = _id.current();
         _proposals[id] = Proposal({
@@ -88,9 +95,9 @@ contract DAO is IERC777Recipient {
             }
         } else {
             if (vote_ == Vote.Yes) {
-                _proposals[id].nbYes += 1;
+                _proposals[id].nbYes += _votesBalances[msg.sender];
             } else {
-                _proposals[id].nbNo += 1;
+                _proposals[id].nbNo += _votesBalances[msg.sender];
             }
             _hasVote[msg.sender][id] = true;
         }
